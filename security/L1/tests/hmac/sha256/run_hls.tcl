@@ -18,7 +18,7 @@ set CSIM 1
 set CSYNTH 1
 set COSIM 1
 set VIVADO_SYN 1
-set VIVADO_IMPL 0
+set VIVADO_IMPL 1
 set CUR_DIR [pwd]
 set XF_PROJ_ROOT $CUR_DIR/../../../..
 set XPART xc7z020-clg484-1
@@ -27,7 +27,8 @@ set PROJ "hmac_sha256_test.prj"
 set SOLN "solution1"
 
 if {![info exists CLKP]} {
-  set CLKP 12.5
+  # Tighten default clock to encourage lower latency*period while keeping slack positive.
+  set CLKP 10.0
 }
 
 open_project -reset $PROJ
@@ -38,16 +39,10 @@ set_top test_hmac_sha256
 
 open_solution -reset $SOLN
 
-# 设置综合优化策略
-set_directive_interface -mode ap_ctrl_chain "test_hmac_sha256"
 
-# 设置内存优化
-config_compile -unsafe_math_optimizations=1
-config_interface -m_axi_addr64=0 -m_axi_alignment_byte_size=64
-config_rtl -reset_level=high
 
 set_part $XPART
-create_clock -period 11.8
+create_clock -period $CLKP
 set_clock_uncertainty 10%
 
 if {$CSIM == 1} {
