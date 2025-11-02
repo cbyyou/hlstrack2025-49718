@@ -27,7 +27,8 @@ set PROJ "hmac_sha256_test.prj"
 set SOLN "solution1"
 
 if {![info exists CLKP]} {
-  set CLKP 15.0
+  # Tighten default clock to encourage lower latency*period while keeping slack positive.
+  set CLKP 10.0
 }
 
 open_project -reset $PROJ

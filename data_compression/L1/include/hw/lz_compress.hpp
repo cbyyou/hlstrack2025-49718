@@ -53,13 +53,13 @@ template <int MATCH_LEN,
           int LZ_MAX_OFFSET_LIMIT,
           int MATCH_LEVEL = 6,
           int MIN_OFFSET = 1,
-          int LZ_DICT_SIZE = 1 << 12,
+          int LZ_DICT_SIZE = 1 << 11,
           int LEFT_BYTES = 64>
 void lzCompress(hls::stream<ap_uint<8> >& inStream, hls::stream<ap_uint<32> >& outStream, uint32_t input_size) {
     const int c_dictEleWidth = (MATCH_LEN * 8 + 24);
     typedef ap_uint<MATCH_LEVEL * c_dictEleWidth> uintDictV_t;
     typedef ap_uint<c_dictEleWidth> uintDict_t;
-
+    const int c_flushUnroll = 8; // lower flush/unroll to reduce BRAM pressure
     if (input_size == 0) return;
     // Dictionary
     uintDictV_t dict[LZ_DICT_SIZE];
@@ -71,10 +71,13 @@ void lzCompress(hls::stream<ap_uint<8> >& inStream, hls::stream<ap_uint<32> >& o
     }
 // Initialization of Dictionary
 dict_flush:
-    for (int i = 0; i < LZ_DICT_SIZE; i++) {
+    for (int i = 0; i < LZ_DICT_SIZE; i += c_flushUnroll) {
 #pragma HLS PIPELINE II = 1
-#pragma HLS UNROLL FACTOR = 2
-        dict[i] = resetValue;
+    flush_inner:
+        for (int f = 0; f < c_flushUnroll; ++f) {
+#pragma HLS UNROLL
+            dict[i + f] = resetValue;
+        }
     }
 
     uint8_t present_window[MATCH_LEN];
@@ -187,7 +190,7 @@ template <int MAX_INPUT_SIZE = 64 * 1024,
           int CORE_ID = 0,
           int MATCH_LEVEL = 6,
           int MIN_OFFSET = 1,
-          int LZ_DICT_SIZE = 1 << 12,
+          int LZ_DICT_SIZE = 1 << 11,
           int LEFT_BYTES = 64>
 void lzCompress(hls::stream<IntVectorStream_dt<8, 1> >& inStream, hls::stream<IntVectorStream_dt<32, 1> >& outStream) {
     const uint16_t c_indxBitCnts = 24;
@@ -205,7 +208,8 @@ void lzCompress(hls::stream<IntVectorStream_dt<8, 1> >& inStream, hls::stream<In
 #endif
 
     uintDictV_t dict[LZ_DICT_SIZE];
-#pragma HLS RESOURCE variable = dict core = XPM_MEMORY uram
+// Use BRAM for this dict to avoid URAM-specific resource pressure on smaller devices
+#pragma HLS BIND_STORAGE variable = dict type = RAM_T2P impl = BRAM
 
     // local buffers for each block
     uint8_t present_window[MATCH_LEN];

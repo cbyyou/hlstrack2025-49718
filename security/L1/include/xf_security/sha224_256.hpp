@@ -528,8 +528,6 @@ inline void generateMsgSchedule(hls::stream<SHA256Block>& blk_strm,
     while (!e) {
         uint64_t n = nblk_strm.read();
         for (uint64_t i = 0; i < n; ++i) {
-#pragma HLS latency max = 65
-
             SHA256Block blk = blk_strm.read();
 #pragma HLS array_partition variable = blk.M complete
 
@@ -545,59 +543,25 @@ inline void generateMsgSchedule(hls::stream<SHA256Block>& blk_strm,
                 w_strm.write(Wt);
             }
 
+            ap_uint<4> head = 0;
+
         LOOP_SHA256_PREPARE_WT64:
             for (short t = 16; t < 64; ++t) {
 #pragma HLS pipeline II = 1
-                // uint32_t Wt = SSIG1(W[t - 2]) + W[t - 7] + SSIG0(W[t - 15]) + W[t - 16];
-                // W[t] = Wt;
-                uint32_t Wt = SSIG1(W[14]) + W[9] + SSIG0(W[1]) + W[0];
-                for (unsigned char j = 0; j < 15; ++j) {
-                    W[j] = W[j + 1];
-                }
-                W[15] = Wt;
+#pragma HLS dependence variable = W inter false
+                // The ring buffer avoids shifting 16 elements every cycle.
+                uint32_t wtm2 = W[(head + 14) & 0xf];
+                uint32_t wtm7 = W[(head + 9) & 0xf];
+                uint32_t wtm15 = W[(head + 1) & 0xf];
+                uint32_t wtm16 = W[head];
+                uint32_t Wt = SSIG1(wtm2) + wtm7 + SSIG0(wtm15) + wtm16;
+                W[head] = Wt;
                 w_strm.write(Wt);
+                head = (head + 1) & 0xf;
             }
         }
         e = end_nblk_strm.read();
     }
-}
-
-inline void sha256_iter(uint32_t& a,
-                        uint32_t& b,
-                        uint32_t& c,
-                        uint32_t& d,
-                        uint32_t& e,
-                        uint32_t& f,
-                        uint32_t& g,
-                        uint32_t& h,
-                        hls::stream<uint32_t>& w_strm,
-                        uint32_t& Kt,
-                        const uint32_t K[],
-                        short t) {
-    uint32_t Wt = w_strm.read();
-    /// temporal variables
-    uint32_t T1, T2;
-    T1 = h + BSIG1(e) + CH(e, f, g) + Kt + Wt;
-    T2 = BSIG0(a) + MAJ(a, b, c);
-
-    // update working variables.
-    h = g;
-    g = f;
-    f = e;
-    e = d + T1;
-    d = c;
-    c = b;
-    b = a;
-    a = T1 + T2;
-
-    _XF_SECURITY_PRINT(
-        "DEBUG: Kt=%08x, Wt=%08x\n"
-        "\ta=%08x, b=%08x, c=%08x, d=%08x\n"
-        "\te=%08x, f=%08x, g=%08x, h=%08x\n",
-        Kt, Wt, a, b, c, d, e, f, g, h);
-
-    // for next cycle
-    Kt = K[(t + 1) & 63];
 }
 
 /// @brief Digest message blocks and emit final hash.
@@ -677,12 +641,53 @@ LOOP_SHA256_DIGEST_MAIN:
             g = H[6];
             h = H[7];
 
-            uint32_t Kt = K[0];
+            ap_uint<32> W0 = w_strm.read();
+            ap_uint<32> T1_prev = h + BSIG1(e);
+            T1_prev += CH(e, f, g);
+            T1_prev += K[0];
+            T1_prev += W0;
+            ap_uint<32> T2_prev = BSIG0(a) + MAJ(a, b, c);
+
         LOOP_SHA256_UPDATE_64_ROUNDS:
-            for (short t = 0; t < 64; ++t) {
+            for (short t = 1; t < 64; ++t) {
 #pragma HLS pipeline II = 1
-                sha256_iter(a, b, c, d, e, f, g, h, w_strm, Kt, K, t);
+                ap_uint<32> new_e = d + T1_prev;
+                ap_uint<32> new_a = T1_prev + T2_prev;
+
+                h = g;
+                g = f;
+                f = e;
+                e = (uint32_t)new_e;
+                d = c;
+                c = b;
+                b = a;
+                a = (uint32_t)new_a;
+
+                ap_uint<32> Wt = w_strm.read();
+                uint32_t Kt = K[t];
+                ap_uint<32> s1 = BSIG1(e);
+                ap_uint<32> s0 = BSIG0(a);
+                ap_uint<32> choose = CH(e, f, g);
+                ap_uint<32> majority = MAJ(a, b, c);
+
+                ap_uint<32> temp = h + s1;
+                temp += choose;
+                temp += Kt;
+                temp += Wt;
+                T1_prev = temp;
+                T2_prev = s0 + majority;
             } // 64 round loop
+
+            ap_uint<32> final_e = d + T1_prev;
+            ap_uint<32> final_a = T1_prev + T2_prev;
+            h = g;
+            g = f;
+            f = e;
+            e = (uint32_t)final_e;
+            d = c;
+            c = b;
+            b = a;
+            a = (uint32_t)final_a;
 
             // store working variables to internal states.
             H[0] = a + H[0];

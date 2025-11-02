@@ -1,7 +1,7 @@
 INFO: [SIM 2] *************** CSIM start ***************
 INFO: [SIM 4] CSIM will launch CLANG as the compiler.
-   Compiling ../../../../../../../Users/vickyiii/.Xilinx/Vitis/2024.2/vitis_libraries/solver/L1/tests/cholesky/host/test_cholesky.cpp in debug mode
-   Compiling ../../../../../../../Users/vickyiii/.Xilinx/Vitis/2024.2/vitis_libraries/solver/L1/tests/cholesky/kernel/kernel_cholesky_0.cpp in debug mode
+   Compiling ../../../../../host/test_cholesky.cpp in debug mode
+   Compiling ../../../../../kernel/kernel_cholesky_0.cpp in debug mode
    Generating csim.exe
 Running 1 fixed point tests per matrix type on 3 x 3 matrices with LowerTriangular set to 0
 RESULTS_TABLE,Test,IMAT,L Matching,DUT Ratio,LAPACK Ratio,Relative Ratio Difference
