@@ -16,7 +16,6 @@ emconfig.json
 profile*.csv
 timeline*.csv
 *xclbin.run_summary
-reports
 build
 obj_*
 _x_temp.*

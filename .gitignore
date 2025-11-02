@@ -19,7 +19,6 @@ dist/
 
 # HLS generated files
 hls/
-*.xml
 vivado*.jou
 vivado*.log
 *.str

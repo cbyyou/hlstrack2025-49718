@@ -61,11 +61,15 @@ void genPad(hls::stream<ap_uint<hshW> >& keyHashStrm,
         ap_uint<blockSize* 8> k1 = 0;
 
         ap_uint<hshW> keyHash = keyHashStrm.read();
+        
+        // 加载keyHash到k1
         for (int i = 0; i < hshW / dataW; i++) {
 #pragma HLS unroll
             k1.range(blockSize * 8 - i * dataW - 1, blockSize * 8 - (i + 1) * dataW) =
                 keyHash.range(i * dataW + dataW - 1, i * dataW);
         }
+        
+        // 生成ipad和opad
         for (int i = 0; i < blockSize; i++) {
 #pragma HLS unroll
             kipad.range(i * 8 + 7, i * 8) = k1.range(i * 8 + 7, i * 8) ^ 0x36;
@@ -88,16 +92,16 @@ void kpadHash(hls::stream<ap_uint<dataW> >& keyStrm,
 
     hls::stream<bool> eKeyStrm;
 #pragma HLS stream variable = eKeyStrm depth = 4
-#pragma HLS resource variable = eKeyStrm core = FIFO_LUTRAM
+#pragma HLS bind_storage variable=eKeyStrm type=FIFO impl=LUTRAM
     hls::stream<ap_uint<lW> > keyLenStrm;
 #pragma HLS stream variable = keyLenStrm depth = 4
-#pragma HLS resource variable = keyLenStrm core = FIFO_LUTRAM
+#pragma HLS bind_storage variable=keyLenStrm type=FIFO impl=LUTRAM
     hls::stream<ap_uint<hshW> > keyHashStrm;
 #pragma HLS stream variable = keyHashStrm depth = 4
-#pragma HLS resource variable = keyHashStrm core = FIFO_LUTRAM
+#pragma HLS bind_storage variable=keyHashStrm type=FIFO impl=LUTRAM
     hls::stream<bool> ekeyHashStrm;
 #pragma HLS stream variable = ekeyHashStrm depth = 4
-#pragma HLS resource variable = ekeyHashStrm core = FIFO_LUTRAM
+#pragma HLS bind_storage variable=ekeyHashStrm type=FIFO impl=LUTRAM
 
     expandStrm<lW, keyLen>(eStrm, eKeyStrm, keyLenStrm);
 
@@ -119,15 +123,16 @@ void kpad(hls::stream<ap_uint<dataW> >& keyStrm,
             ap_uint<blockSize* 8> k1 = 0;
             for (int i = 0; i < ((keyLen * 8 + dataW - 1) / dataW); i++) {
 #pragma HLS pipeline II = 1
+#pragma HLS loop_tripcount min=8 max=8 avg=8
                 ap_uint<dataW> tmp = keyStrm.read();
                 k1 <<= dataW;
                 k1.range(dataW - 1 + ((blockSize - keyLen) * 8), ((blockSize - keyLen) * 8)) = tmp;
-                // k1.range(blockSize * 8 - 1 - i * dataW, blockSize * 8 - (i + 1) * dataW) = tmp;
             }
             ap_uint<blockSize* 8> kipad = 0;
             ap_uint<blockSize* 8> kopad = 0;
+            // 优化的pad生成 - 完全并行
             for (int i = 0; i < blockSize; i++) {
-#pragma HLS unroll
+#pragma HLS unroll complete
                 kipad(i * 8 + 7, i * 8) = 0x36 ^ k1.range(i * 8 + 7, i * 8);
                 kopad(i * 8 + 7, i * 8) = 0x5c ^ k1.range(i * 8 + 7, i * 8);
             }
@@ -159,15 +164,16 @@ void mergeKipad(hls::stream<ap_uint<blockSize * 8> >& kipadStrm,
 
         ap_uint<blockSize* 8> kipad = kipadStrm.read();
 
+        // 输出kipad
         for (int i = 0; i < ((blockSize * 8 + dataW - 1) / dataW); i++) {
 #pragma HLS pipeline II = 1
-            // mergeKipadStrm.write(kipad.range(blockSize * 8 - 1 - i * dataW, blockSize * 8 - (i + 1) * dataW));
             mergeKipadStrm.write(kipad.range(blockSize * 8 - 1, blockSize * 8 - dataW));
             kipad <<= dataW;
         }
 
         kopadOutStrm.write(kopadInStrm.read());
 
+        // 输出消息
         for (int i = 0; i < ((ml * 8 + dataW - 1) / dataW); i++) {
 #pragma HLS pipeline II = 1
             mergeKipadStrm.write(msgStrm.read());
@@ -188,14 +194,14 @@ void msgHash(hls::stream<ap_uint<blockSize * 8> >& kipadStrm,
 #pragma HLS dataflow
 
     hls::stream<ap_uint<dataW> > mergeKipadStrm;
-#pragma HLS stream variable = mergeKipadStrm depth = 128
-#pragma HLS resource variable = mergeKipadStrm core = FIFO_BRAM
+#pragma HLS stream variable = mergeKipadStrm depth = 16
+#pragma HLS bind_storage variable=mergeKipadStrm type=FIFO impl=LUTRAM
     hls::stream<ap_uint<lW> > mergeKipadLenStrm;
-#pragma HLS stream variable = mergeKipadLenStrm depth = 4
-#pragma HLS resource variable = mergeKipadLenStrm core = FIFO_LUTRAM
+#pragma HLS stream variable = mergeKipadLenStrm depth = 2
+#pragma HLS bind_storage variable=mergeKipadLenStrm type=FIFO impl=SRL
     hls::stream<bool> eMergeKipadLenStrm;
-#pragma HLS stream variable = eMergeKipadLenStrm depth = 4
-#pragma HLS resource variable = eMergeKipadLenStrm core = FIFO_LUTRAM
+#pragma HLS stream variable = eMergeKipadLenStrm depth = 2
+#pragma HLS bind_storage variable=eMergeKipadLenStrm type=FIFO impl=SRL
 
     mergeKipad<dataW, lW, hshW, blockSize>(kipadStrm, kopadInStrm, msgStrm, msgLenStrm, eLenStrm, mergeKipadStrm,
                                            mergeKipadLenStrm, eMergeKipadLenStrm, kopadOutStrm);
@@ -217,12 +223,14 @@ void mergeKopad(hls::stream<ap_uint<blockSize * 8> >& kopadStrm,
         ap_uint<blockSize* 8> kopad = kopadStrm.read();
         ap_uint<hshW> msgHash = msgHashStrm.read();
 
+        // 输出kopad
         for (int i = 0; i < ((blockSize * 8 + dataW - 1) / dataW); i++) {
 #pragma HLS pipeline II = 1
             mergeKopadStrm.write(kopad.range(blockSize * 8 - 1, blockSize * 8 - dataW));
             kopad <<= dataW;
         }
 
+        // 输出msgHash
         for (int i = 0; i < ((hshW + dataW - 1) / dataW); i++) {
 #pragma HLS pipeline II = 1
             mergeKopadStrm.write(msgHash.range(dataW - 1, 0));
@@ -241,14 +249,14 @@ void resHash(hls::stream<ap_uint<blockSize * 8> >& kopadStrm,
 #pragma HLS dataflow
 
     hls::stream<ap_uint<dataW> > mergeKopadStrm;
-#pragma HLS stream variable = mergeKopadStrm depth = 4
-#pragma HLS resource variable = mergeKopadStrm core = FIFO_LUTRAM
+#pragma HLS stream variable = mergeKopadStrm depth = 2
+#pragma HLS bind_storage variable=mergeKopadStrm type=FIFO impl=SRL
     hls::stream<ap_uint<lW> > mergeKopadLenStrm;
-#pragma HLS stream variable = mergeKopadLenStrm depth = 4
-#pragma HLS resource variable = mergeKopadLenStrm core = FIFO_LUTRAM
+#pragma HLS stream variable = mergeKopadLenStrm depth = 1
+#pragma HLS bind_storage variable=mergeKopadLenStrm type=FIFO impl=SRL
     hls::stream<bool> eMergeKopadLenStrm;
-#pragma HLS stream variable = eMergeKopadLenStrm depth = 4
-#pragma HLS resource variable = eMergeKopadLenStrm core = FIFO_LUTRAM
+#pragma HLS stream variable = eMergeKopadLenStrm depth = 1
+#pragma HLS bind_storage variable=eMergeKopadLenStrm type=FIFO impl=SRL
 
     mergeKopad<dataW, lW, hshW, keyLen, blockSize>(kopadStrm, msgHashStrm, eMsgHashStrm, mergeKopadStrm,
                                                    mergeKopadLenStrm, eMergeKopadLenStrm);
@@ -264,26 +272,25 @@ void hmacDataflow(hls::stream<ap_uint<dataW> >& keyStrm,
                   hls::stream<ap_uint<hshW> >& hshStrm,
                   hls::stream<bool>& eHshStrm) {
 #pragma HLS dataflow
+#pragma HLS stable variable=keyStrm
+#pragma HLS stable variable=msgStrm
+#pragma HLS stable variable=msgLenStrm
+
+    // 优化FIFO配置 - 平衡性能和资源
     hls::stream<bool> eKipadStrm;
-#pragma HLS stream variable = eKipadStrm depth = 4
-#pragma HLS resource variable = eKipadStrm core = FIFO_LUTRAM
+#pragma HLS stream variable = eKipadStrm depth = 2
 
     hls::stream<ap_uint<blockSize * 8> > kipadStrm;
-#pragma HLS stream variable = kipadStrm depth = 4
-#pragma HLS resource variable = kipadStrm core = FIFO_LUTRAM
+#pragma HLS stream variable = kipadStrm depth = 10
     hls::stream<ap_uint<blockSize * 8> > kopadStrm;
-#pragma HLS stream variable = kopadStrm depth = 4
-#pragma HLS resource variable = kopadStrm core = FIFO_LUTRAM
+#pragma HLS stream variable = kopadStrm depth = 10
     hls::stream<ap_uint<blockSize * 8> > kopad2Strm;
-#pragma HLS stream variable = kopad2Strm depth = 4
-#pragma HLS resource variable = kopad2Strm core = FIFO_LUTRAM
+#pragma HLS stream variable = kopad2Strm depth = 10
 
     hls::stream<ap_uint<hshW> > msgHashStrm;
-#pragma HLS stream variable = msgHashStrm depth = 4
-#pragma HLS resource variable = msgHashStrm core = FIFO_LUTRAM
+#pragma HLS stream variable = msgHashStrm depth = 2
     hls::stream<bool> eMsgHashStrm;
-#pragma HLS stream variable = eMsgHashStrm depth = 4
-#pragma HLS resource variable = eMsgHashStrm core = FIFO_LUTRAM
+#pragma HLS stream variable = eMsgHashStrm depth = 2
 
     kpad<dataW, lW, hshW, keyLen, blockSize, F>(keyStrm, eLenStrm, kipadStrm, kopadStrm, eKipadStrm);
 
