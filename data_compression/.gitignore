@@ -6,7 +6,6 @@
 jks.*
 *.prj
 TestResults
-*.log
 *.protoinst
 build_dir.*
 _x_temp.*
